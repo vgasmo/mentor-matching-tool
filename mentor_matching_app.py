@@ -68,7 +68,6 @@ if 'matches' not in st.session_state:
 
 if 'email_settings' not in st.session_state:
     st.session_state.email_settings = load_email_settings()
-```
         'smtp_port': 587,
         'sender_email': '',
         'sender_password': '',

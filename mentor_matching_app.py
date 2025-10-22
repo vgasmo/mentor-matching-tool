@@ -68,13 +68,8 @@ if 'matches' not in st.session_state:
 
 if 'email_settings' not in st.session_state:
     st.session_state.email_settings = load_email_settings()
-        'smtp_port': 587,
-        'sender_email': '',
-        'sender_password': '',
-        'use_email': False
-    }
-
-# Email functions
+        
+    # Email functions
 def send_match_notification_email(mentor_email: str, mentee_email: str, 
                                   mentor_name: str, mentee_name: str, 
                                   project_name: str, match_score: float, 

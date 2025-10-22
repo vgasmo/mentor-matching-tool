@@ -7,7 +7,6 @@ import re
 from typing import List, Dict, Tuple
 import json
 import smtplib
-```python
 # Load email settings from Streamlit Secrets
 def load_email_settings():
     """Load email configuration from Streamlit Secrets"""

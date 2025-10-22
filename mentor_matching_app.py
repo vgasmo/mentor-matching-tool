@@ -6,6 +6,9 @@ from datetime import datetime
 import re
 from typing import List, Dict, Tuple
 import json
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 # Page configuration
 st.set_page_config(
@@ -36,10 +39,125 @@ if 'matches' not in st.session_state:
         'MatchID', 'MenteeID', 'MentorID', 'Status', 'PriorityScore', 
         'Rationale', 'StartDate', 'Session1', 'Session2', 'Session3',
         'MenteeSatisfaction', 'MentorSatisfaction', 'Outcome', 
-        'ConvertedToMentor', 'ClosedDate', 'LPOC'
+        'ConvertedToMentor', 'ClosedDate', 'LPOC', 'EmailSent'
     ])
 
-# Matching Algorithm Functions
+if 'email_settings' not in st.session_state:
+    st.session_state.email_settings = {
+        'smtp_server': '',
+        'smtp_port': 587,
+        'sender_email': '',
+        'sender_password': '',
+        'use_email': False
+    }
+
+# Email functions
+def send_match_notification_email(mentor_email: str, mentee_email: str, 
+                                  mentor_name: str, mentee_name: str, 
+                                  project_name: str, match_score: float, 
+                                  rationale: str, lpoc_email: str = None):
+    """
+    Send email notification to mentor, mentee, and optionally LPOC about new match
+    """
+    if not st.session_state.email_settings['use_email']:
+        return False, "Email notifications not configured"
+
+    try:
+        # Email content
+        subject = f"🤝 New Mentor Match - RUN-InnoBoost Program"
+
+        # Email to Mentor
+        mentor_body = f"""
+Dear {mentor_name},
+
+Great news! You have been matched with a new mentee in the RUN-InnoBoost mentoring program.
+
+MATCH DETAILS:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Mentee: {mentee_name}
+Project: {project_name}
+Match Score: {match_score:.1f}/100
+Rationale: {rationale}
+
+NEXT STEPS:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. Reply to this email to introduce yourself to {mentee_name} (CC'd)
+2. Schedule your first mentoring session within the next 2 weeks
+3. Prepare by reviewing the mentee's project information
+
+MENTEE CONTACT:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Email: {mentee_email}
+
+Thank you for your commitment to supporting entrepreneurship in Portugal!
+
+Best regards,
+RUN-InnoBoost Team
+Startup Leiria
+"""
+
+        # Email to Mentee
+        mentee_body = f"""
+Dear {mentee_name},
+
+Congratulations! We have matched you with an experienced mentor for your project "{project_name}".
+
+MATCH DETAILS:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Mentor: {mentor_name}
+Match Score: {match_score:.1f}/100
+Why this match: {rationale}
+
+NEXT STEPS:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. Reply to this email to introduce yourself and your project (CC'd with mentor)
+2. Schedule your first mentoring session within the next 2 weeks
+3. Prepare 3-5 specific questions or challenges to discuss
+
+MENTOR CONTACT:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Email: {mentor_email}
+
+Make the most of this opportunity! Your mentor is here to help you succeed.
+
+Best regards,
+RUN-InnoBoost Team
+Startup Leiria
+"""
+
+        # Setup SMTP connection
+        smtp_server = st.session_state.email_settings['smtp_server']
+        smtp_port = st.session_state.email_settings['smtp_port']
+        sender_email = st.session_state.email_settings['sender_email']
+        sender_password = st.session_state.email_settings['sender_password']
+
+        server = smtplib.SMTP(smtp_server, smtp_port)
+        server.starttls()
+        server.login(sender_email, sender_password)
+
+        # Send to mentor (with mentee CC'd)
+        msg_mentor = MIMEMultipart()
+        msg_mentor['From'] = sender_email
+        msg_mentor['To'] = mentor_email
+        msg_mentor['Cc'] = mentee_email
+        if lpoc_email:
+            msg_mentor['Cc'] = f"{mentee_email}, {lpoc_email}"
+        msg_mentor['Subject'] = subject
+        msg_mentor.attach(MIMEText(mentor_body, 'plain'))
+
+        recipients = [mentor_email, mentee_email]
+        if lpoc_email:
+            recipients.append(lpoc_email)
+
+        server.send_message(msg_mentor)
+
+        server.quit()
+        return True, "Email notifications sent successfully!"
+
+    except Exception as e:
+        return False, f"Email error: {str(e)}"
+
+# Matching Algorithm Functions (same as before)
 def calculate_tag_overlap(tags1: str, tags2: str) -> float:
     """Calculate percentage overlap between two comma-separated tag strings"""
     if pd.isna(tags1) or pd.isna(tags2) or not tags1 or not tags2:
@@ -69,7 +187,7 @@ def check_language_match(mentor_langs: str, mentee_langs: str) -> bool:
 def check_format_compatibility(mentor_format: str, mentee_format: str) -> bool:
     """Check if meeting format preferences are compatible"""
     if pd.isna(mentor_format) or pd.isna(mentee_format):
-        return True  # Default to compatible if not specified
+        return True
 
     mentor_fmt = str(mentor_format).strip().lower()
     mentee_fmt = str(mentee_format).strip().lower()
@@ -84,17 +202,13 @@ def check_timezone_compatibility(mentor_tz: str, mentee_tz: str) -> bool:
     if pd.isna(mentor_tz) or pd.isna(mentee_tz):
         return True
 
-    # Simplified - in production, use actual timezone offset calculation
     return str(mentor_tz).strip().lower() == str(mentee_tz).strip().lower()
 
 def calculate_match_score(mentor_row: pd.Series, mentee_row: pd.Series) -> Tuple[float, str]:
-    """
-    Calculate compatibility score (0-100) and rationale between mentor and mentee
-    """
+    """Calculate compatibility score (0-100) and rationale"""
     score_components = {}
     rationale_parts = []
 
-    # 1. Sector/Expertise overlap (30% weight)
     sector_overlap = calculate_tag_overlap(mentor_row['Sectors'], mentee_row['Sector'])
     expertise_overlap = calculate_tag_overlap(mentor_row['Expertise'], mentee_row['Needs'])
 
@@ -106,7 +220,6 @@ def calculate_match_score(mentor_row: pd.Series, mentee_row: pd.Series) -> Tuple
     if expertise_overlap > 50:
         rationale_parts.append(f"High expertise-needs match ({expertise_overlap:.0f}%)")
 
-    # 2. Language compatibility (20% weight)
     has_language_match = check_language_match(mentor_row['Languages'], mentee_row['Languages'])
     language_score = 100 if has_language_match else 0
     score_components['language'] = language_score * 0.20
@@ -116,7 +229,6 @@ def calculate_match_score(mentor_row: pd.Series, mentee_row: pd.Series) -> Tuple
     else:
         rationale_parts.append("⚠️ No language overlap")
 
-    # 3. Format compatibility (15% weight)
     format_compatible = check_format_compatibility(mentor_row['Format'], mentee_row['Format'])
     format_score = 100 if format_compatible else 30
     score_components['format'] = format_score * 0.15
@@ -124,7 +236,6 @@ def calculate_match_score(mentor_row: pd.Series, mentee_row: pd.Series) -> Tuple
     if format_compatible:
         rationale_parts.append("Format compatible")
 
-    # 4. Timezone compatibility (10% weight)
     timezone_compatible = check_timezone_compatibility(mentor_row['TimeZone'], mentee_row['TimeZone'])
     timezone_score = 100 if timezone_compatible else 50
     score_components['timezone'] = timezone_score * 0.10
@@ -132,29 +243,22 @@ def calculate_match_score(mentor_row: pd.Series, mentee_row: pd.Series) -> Tuple
     if timezone_compatible:
         rationale_parts.append("Same timezone")
 
-    # 5. Availability overlap (15% weight)
     availability_score = 100 if not pd.isna(mentor_row['Availability']) and not pd.isna(mentee_row['Availability']) else 50
     score_components['availability'] = availability_score * 0.15
 
-    # 6. Functional expertise (10% weight)
     function_overlap = calculate_tag_overlap(mentor_row['Functions'], mentee_row['Needs'])
     score_components['functions'] = function_overlap * 0.10
 
     if function_overlap > 40:
         rationale_parts.append(f"Functional fit ({function_overlap:.0f}%)")
 
-    # Calculate total score
     total_score = sum(score_components.values())
-
-    # Build rationale string
     rationale = "; ".join(rationale_parts)
 
     return round(total_score, 1), rationale
 
 def find_best_matches(mentors_df: pd.DataFrame, mentees_df: pd.DataFrame, top_n: int = 3) -> pd.DataFrame:
-    """
-    Find best mentor matches for all mentees
-    """
+    """Find best mentor matches for all mentees"""
     all_matches = []
 
     for _, mentee in mentees_df.iterrows():
@@ -166,15 +270,16 @@ def find_best_matches(mentors_df: pd.DataFrame, mentees_df: pd.DataFrame, top_n:
             mentee_matches.append({
                 'MenteeID': mentee['MenteeID'],
                 'MenteeName': mentee['Name'],
+                'MenteeEmail': mentee['Email'],
+                'ProjectName': mentee['ProjectName'],
+                'LPOC': mentee['LPOC'],
                 'MentorID': mentor['MentorID'],
                 'MentorName': mentor['Name'],
-                'Score': score,
-                'Rationale': rationale,
                 'MentorEmail': mentor['Email'],
-                'MenteeEmail': mentee['Email']
+                'Score': score,
+                'Rationale': rationale
             })
 
-        # Sort by score and take top N
         mentee_matches.sort(key=lambda x: x['Score'], reverse=True)
         all_matches.extend(mentee_matches[:top_n])
 
@@ -182,7 +287,7 @@ def find_best_matches(mentors_df: pd.DataFrame, mentees_df: pd.DataFrame, top_n:
 
 # Application Header
 st.title("🤝 RUN-InnoBoost Mentor Matching System")
-st.markdown("**Intelligent mentor-mentee matching powered by algorithmic scoring**")
+st.markdown("**Intelligent mentor-mentee matching powered by algorithmic scoring with automatic email notifications**")
 
 # Sidebar Navigation
 st.sidebar.title("Navigation")
@@ -192,6 +297,7 @@ page = st.sidebar.radio("Go to", [
     "👨‍🎓 Manage Mentees",
     "🎯 Smart Matching",
     "📊 Match Management",
+    "📧 Email Settings",
     "📤 Export Data"
 ])
 
@@ -309,12 +415,10 @@ elif page == "👨‍🏫 Manage Mentors":
         st.subheader("All Mentors")
 
         if len(st.session_state.mentors) > 0:
-            # Display simplified view
             display_cols = ['MentorID', 'Name', 'Email', 'Institution', 'Sectors', 
                           'Expertise', 'Languages', 'Format']
             st.dataframe(st.session_state.mentors[display_cols], use_container_width=True)
 
-            # Delete option
             mentor_to_delete = st.selectbox("Select mentor to delete", 
                                            st.session_state.mentors['MentorID'].tolist(),
                                            key="delete_mentor_select")
@@ -329,7 +433,7 @@ elif page == "👨‍🏫 Manage Mentors":
 
     with tab3:
         st.subheader("Bulk Import Mentors")
-        st.markdown("Upload a CSV file with mentor data. [Download template](#)")
+        st.markdown("Upload a CSV file with mentor data.")
 
         uploaded_file = st.file_uploader("Choose CSV file", type=['csv'])
         if uploaded_file:
@@ -467,7 +571,7 @@ elif page == "👨‍🎓 Manage Mentees":
 # ==================== SMART MATCHING PAGE ====================
 elif page == "🎯 Smart Matching":
     st.header("Smart Mentor-Mentee Matching")
-    st.markdown("**AI-powered algorithm matches mentees with the best mentors based on multiple criteria**")
+    st.markdown("**AI-powered algorithm matches mentees with the best mentors + automatic email notifications**")
 
     if len(st.session_state.mentors) == 0 or len(st.session_state.mentees) == 0:
         st.warning("⚠️ Please add mentors and mentees before running the matching algorithm.")
@@ -480,18 +584,19 @@ elif page == "🎯 Smart Matching":
         with col2:
             min_score = st.slider("Minimum match score threshold", 0, 100, 40)
 
+        send_emails = st.checkbox("📧 Send automatic email notifications when approving matches", 
+                                 value=st.session_state.email_settings['use_email'])
+
         if st.button("🚀 Run Matching Algorithm", type="primary"):
             with st.spinner("Calculating optimal matches..."):
                 matches_df = find_best_matches(st.session_state.mentors, 
                                                st.session_state.mentees, 
                                                top_n=top_n)
 
-                # Filter by minimum score
                 matches_df = matches_df[matches_df['Score'] >= min_score]
 
                 st.success(f"✅ Found {len(matches_df)} potential matches!")
 
-                # Display results grouped by mentee
                 st.subheader("Matching Results")
 
                 for mentee_id in matches_df['MenteeID'].unique():
@@ -518,8 +623,9 @@ elif page == "🎯 Smart Matching":
                                 st.caption(f"{score_color}")
 
                             with col3:
-                                if st.button(f"✅ Approve Match", 
+                                if st.button(f"✅ Approve & Notify", 
                                            key=f"approve_{match['MenteeID']}_{match['MentorID']}"):
+
                                     # Create match record
                                     new_match = pd.DataFrame([{
                                         'MatchID': f"MA{len(st.session_state.matches)+1:03d}",
@@ -537,14 +643,39 @@ elif page == "🎯 Smart Matching":
                                         'Outcome': '',
                                         'ConvertedToMentor': '',
                                         'ClosedDate': '',
-                                        'LPOC': ''
+                                        'LPOC': match['LPOC'],
+                                        'EmailSent': 'No'
                                     }])
 
                                     st.session_state.matches = pd.concat(
                                         [st.session_state.matches, new_match], 
                                         ignore_index=True
                                     )
-                                    st.success(f"Match created: {match['MenteeName']} ↔ {match['MentorName']}")
+
+                                    # Send email if enabled
+                                    if send_emails and st.session_state.email_settings['use_email']:
+                                        success, message = send_match_notification_email(
+                                            mentor_email=match['MentorEmail'],
+                                            mentee_email=match['MenteeEmail'],
+                                            mentor_name=match['MentorName'],
+                                            mentee_name=match['MenteeName'],
+                                            project_name=match['ProjectName'],
+                                            match_score=match['Score'],
+                                            rationale=match['Rationale'],
+                                            lpoc_email=None  # Add LPOC email if available
+                                        )
+
+                                        if success:
+                                            st.session_state.matches.loc[
+                                                st.session_state.matches['MatchID'] == new_match['MatchID'].iloc[0],
+                                                'EmailSent'
+                                            ] = 'Yes'
+                                            st.success(f"✅ Match created and emails sent to {match['MenteeName']} ↔ {match['MentorName']}")
+                                        else:
+                                            st.warning(f"✅ Match created but email failed: {message}")
+                                    else:
+                                        st.success(f"✅ Match created: {match['MenteeName']} ↔ {match['MentorName']}")
+
                                     st.rerun()
 
                             st.divider()
@@ -556,7 +687,6 @@ elif page == "📊 Match Management":
     if len(st.session_state.matches) == 0:
         st.info("No matches created yet. Go to 'Smart Matching' to create matches.")
     else:
-        # Filter options
         col1, col2, col3 = st.columns(3)
         with col1:
             status_filter = st.multiselect("Filter by Status", 
@@ -569,21 +699,19 @@ elif page == "📊 Match Management":
 
         st.subheader(f"All Matches ({len(filtered_matches)})")
 
-        # Display matches
         for idx, match in filtered_matches.iterrows():
-            with st.expander(f"Match {match['MatchID']} - Score: {match['PriorityScore']:.1f} - Status: {match['Status']}"):
+            email_badge = "📧✅" if match.get('EmailSent') == 'Yes' else "📧❌"
+
+            with st.expander(f"Match {match['MatchID']} - Score: {match['PriorityScore']:.1f} - Status: {match['Status']} {email_badge}"):
                 col1, col2 = st.columns(2)
 
                 with col1:
-                    st.markdown("**Mentee:**")
-                    st.write(f"ID: {match['MenteeID']}")
-
-                    st.markdown("**Mentor:**")
-                    st.write(f"ID: {match['MentorID']}")
-
                     st.markdown("**Match Details:**")
+                    st.write(f"Mentee ID: {match['MenteeID']}")
+                    st.write(f"Mentor ID: {match['MentorID']}")
                     st.write(f"Priority Score: {match['PriorityScore']:.1f}")
                     st.write(f"Rationale: {match['Rationale']}")
+                    st.write(f"Email Sent: {match.get('EmailSent', 'No')}")
 
                 with col2:
                     new_status = st.selectbox("Update Status", 
@@ -599,12 +727,136 @@ elif page == "📊 Match Management":
                         mentor_sat = st.slider("Mentor Satisfaction", 1, 5, 3, key=f"mrsat_{idx}")
                         outcome = st.text_area("Outcome", key=f"outcome_{idx}")
 
+                    # Resend email button
+                    if st.button("📧 Resend Match Email", key=f"resend_{idx}"):
+                        if st.session_state.email_settings['use_email']:
+                            # Get mentor and mentee details
+                            mentor = st.session_state.mentors[
+                                st.session_state.mentors['MentorID'] == match['MentorID']
+                            ].iloc[0]
+                            mentee = st.session_state.mentees[
+                                st.session_state.mentees['MenteeID'] == match['MenteeID']
+                            ].iloc[0]
+
+                            success, message = send_match_notification_email(
+                                mentor_email=mentor['Email'],
+                                mentee_email=mentee['Email'],
+                                mentor_name=mentor['Name'],
+                                mentee_name=mentee['Name'],
+                                project_name=mentee['ProjectName'],
+                                match_score=match['PriorityScore'],
+                                rationale=match['Rationale']
+                            )
+
+                            if success:
+                                st.success("✅ Email resent successfully!")
+                            else:
+                                st.error(f"❌ {message}")
+                        else:
+                            st.warning("⚠️ Email settings not configured. Go to Email Settings page.")
+
                     if st.button("💾 Update Match", key=f"update_{idx}"):
                         st.session_state.matches.at[idx, 'Status'] = new_status
                         st.session_state.matches.at[idx, 'StartDate'] = str(start_date)
                         st.session_state.matches.at[idx, 'Session1'] = str(session1_date)
                         st.success("Match updated!")
                         st.rerun()
+
+# ==================== EMAIL SETTINGS PAGE ====================
+elif page == "📧 Email Settings":
+    st.header("Email Notification Settings")
+
+    st.markdown("""
+    Configure email settings to automatically notify mentors and mentees when matches are created.
+
+    **Recommended Email Providers:**
+    - Gmail (smtp.gmail.com, port 587)
+    - Outlook (smtp.office365.com, port 587)
+    - Your organization's SMTP server
+
+    ⚠️ **Security Note:** For Gmail, you need to use an "App Password" (not your regular password).
+    [Learn how to create Gmail App Password](https://support.google.com/accounts/answer/185833)
+    """)
+
+    with st.form("email_settings_form"):
+        st.subheader("SMTP Configuration")
+
+        use_email = st.checkbox("Enable email notifications", 
+                               value=st.session_state.email_settings['use_email'])
+
+        smtp_server = st.text_input("SMTP Server", 
+                                    value=st.session_state.email_settings['smtp_server'],
+                                    placeholder="smtp.gmail.com")
+
+        smtp_port = st.number_input("SMTP Port", 
+                                    min_value=1, 
+                                    max_value=65535, 
+                                    value=st.session_state.email_settings['smtp_port'])
+
+        sender_email = st.text_input("Sender Email Address", 
+                                     value=st.session_state.email_settings['sender_email'],
+                                     placeholder="your-email@gmail.com")
+
+        sender_password = st.text_input("Email Password / App Password", 
+                                       type="password",
+                                       placeholder="Your app password")
+
+        # Test email
+        test_email = st.text_input("Test email address (optional)", 
+                                   placeholder="Enter your email to send a test")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            save_button = st.form_submit_button("💾 Save Settings", type="primary")
+
+        with col2:
+            test_button = st.form_submit_button("📧 Send Test Email")
+
+        if save_button:
+            st.session_state.email_settings = {
+                'smtp_server': smtp_server,
+                'smtp_port': smtp_port,
+                'sender_email': sender_email,
+                'sender_password': sender_password,
+                'use_email': use_email
+            }
+            st.success("✅ Email settings saved successfully!")
+            st.rerun()
+
+        if test_button:
+            if not test_email:
+                st.error("Please enter a test email address")
+            else:
+                try:
+                    msg = MIMEMultipart()
+                    msg['From'] = sender_email
+                    msg['To'] = test_email
+                    msg['Subject'] = "Test Email - RUN-InnoBoost Mentor Matching System"
+
+                    body = """
+This is a test email from the RUN-InnoBoost Mentor Matching System.
+
+If you received this email, your SMTP configuration is working correctly! ✅
+
+You can now enable automatic email notifications for mentor-mentee matches.
+
+Best regards,
+RUN-InnoBoost Team
+"""
+                    msg.attach(MIMEText(body, 'plain'))
+
+                    server = smtplib.SMTP(smtp_server, smtp_port)
+                    server.starttls()
+                    server.login(sender_email, sender_password)
+                    server.send_message(msg)
+                    server.quit()
+
+                    st.success(f"✅ Test email sent successfully to {test_email}!")
+
+                except Exception as e:
+                    st.error(f"❌ Email test failed: {str(e)}")
+                    st.info("Common issues: Wrong password, need App Password for Gmail, firewall blocking port 587")
 
 # ==================== EXPORT DATA PAGE ====================
 elif page == "📤 Export Data":
@@ -671,5 +923,10 @@ elif page == "📤 Export Data":
 
 # Footer
 st.sidebar.markdown("---")
-st.sidebar.markdown("**RUN-InnoBoost Matching System v1.0**")
-st.sidebar.caption("Powered by intelligent matching algorithms")
+st.sidebar.markdown("**RUN-InnoBoost Matching System v2.0**")
+st.sidebar.caption("Powered by intelligent matching algorithms + email automation")
+
+if st.session_state.email_settings['use_email']:
+    st.sidebar.success("📧 Email notifications: ENABLED")
+else:
+    st.sidebar.warning("📧 Email notifications: DISABLED")

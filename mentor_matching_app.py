@@ -30,7 +30,6 @@ def load_email_settings():
         'sender_password': '',
         'use_email': False
     }
-```
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 

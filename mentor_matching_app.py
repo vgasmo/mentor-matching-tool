@@ -7,6 +7,31 @@ import re
 from typing import List, Dict, Tuple
 import json
 import smtplib
+```python
+# Load email settings from Streamlit Secrets
+def load_email_settings():
+    """Load email configuration from Streamlit Secrets"""
+    try:
+        if "email" in st.secrets:
+            return {
+                'smtp_server': st.secrets["email"]["smtp_server"],
+                'smtp_port': int(st.secrets["email"]["smtp_port"]),
+                'sender_email': st.secrets["email"]["sender_email"],
+                'sender_password': st.secrets["email"]["sender_password"],
+                'use_email': st.secrets["email"].get("use_email", True)
+            }
+    except Exception as e:
+        st.error(f"Error loading email secrets: {e}")
+
+    # Fallback to empty settings
+    return {
+        'smtp_server': '',
+        'smtp_port': 587,
+        'sender_email': '',
+        'sender_password': '',
+        'use_email': False
+    }
+```
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
@@ -42,9 +67,10 @@ if 'matches' not in st.session_state:
         'ConvertedToMentor', 'ClosedDate', 'LPOC', 'EmailSent'
     ])
 
+
 if 'email_settings' not in st.session_state:
-    st.session_state.email_settings = {
-        'smtp_server': '',
+    st.session_state.email_settings = load_email_settings()
+```
         'smtp_port': 587,
         'sender_email': '',
         'sender_password': '',
